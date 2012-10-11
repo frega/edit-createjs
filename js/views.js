@@ -2,6 +2,47 @@
   Drupal.edit = Drupal.edit || {};
   Drupal.edit.views = Drupal.edit.views || {};
 
+  Drupal.edit.views.ToolbarView = Backbone.View.extend({
+    fieldView: null,
+    initialize: function(options) {
+      this.fieldView = options.fieldView;
+      console.log('initialize ToolbarView', this.fieldView, this.fieldView.predicate);
+    },
+    create: function() {
+      if (Drupal.edit.toolbar.create(this.fieldView.$el)) {
+        // We get the label to show from VIE's type system
+        var label = this.fieldView.predicate;
+        var attributeDef = this.fieldView.model.get('@type').attributes.get(this.fieldView.predicate);
+        if (attributeDef && attributeDef.metadata) {
+          label = attributeDef.metadata.label;
+        }
+
+        var self = this;
+        Drupal.edit.toolbar.get(this.fieldView.$el)
+        .find('.edit-toolbar:not(:has(.edit-toolgroup.info))')
+        .append(Drupal.theme('editToolgroup', {
+          classes: 'info',
+          buttons: [
+            {
+              url: '#',
+              label: label,
+              classes: 'blank-button label',
+              hasButtonRole: false
+            }
+          ]
+        }))
+        .delegate('a.label', 'click.edit', function (event) {
+          self.fieldView.$el.trigger('click.edit');
+          event.stopPropagation();
+          event.preventDefault();
+        });
+      }
+    },
+    remove: function() {
+      Drupal.edit.toolbar.remove(this.fieldView.$el);
+    }
+  });
+
   Drupal.edit.views.OverlayView = Backbone.View.extend({
     state: null,
 
@@ -99,6 +140,7 @@
     editing: false,
     vie: null,
     editableViews: [],
+    toolbarView: null,
 
     events: {
       'mouseenter': 'mouseEnter',
@@ -188,39 +230,27 @@
       });
     },
 
+    createToolbarView: function() {
+      if (!this.toolbarView) {
+        this.toolbarView = new Drupal.edit.views.ToolbarView({
+          fieldView: this
+        });
+        this.toolbarView.create();
+      }
+    },
+
+    removeToolbarView: function() {
+      if (this.toolbarView) {
+        this.toolbarView.remove();
+        Drupal.edit.toolbar.remove(this.$el);
+      }
+    },
+
     startHighlight: function () {
       console.log('startHighlight', this.model.id, this.predicate);
-      var self = this;
-
-      if (Drupal.edit.toolbar.create(this.$el)) {
-        // We get the label to show from VIE's type system
-        var label = this.predicate;
-        var attributeDef = this.model.get('@type').attributes.get(this.predicate);
-        if (attributeDef && attributeDef.metadata) {
-          label = attributeDef.metadata.label;
-        }
-
-        Drupal.edit.toolbar.get(this.$el)
-        .find('.edit-toolbar:not(:has(.edit-toolgroup.info))')
-        .append(Drupal.theme('editToolgroup', {
-          classes: 'info',
-          buttons: [
-            {
-              url: '#',
-              label: label,
-              classes: 'blank-button label',
-              hasButtonRole: false
-            }
-          ]
-        }))
-        .delegate('a.label', 'click.edit', function (event) {
-          self.$el.trigger('click.edit');
-          event.stopPropagation();
-          event.preventDefault();
-        });
-      }
-
+      this.createToolbarView();
       // Animations.
+      var self = this;
       setTimeout(function () {
         self.$el.addClass('edit-highlighted');
         Drupal.edit.toolbar.show(self.$el, 'info');
@@ -232,11 +262,9 @@
 
     stopHighlight: function () {
       console.log('stopHighlight', this.model.id, this.predicate);
-
+      this.removeToolbarView();
       // Animations
-      Drupal.edit.toolbar.remove(this.$el);
       this.$el.removeClass('edit-highlighted');
-
       this.state.set('fieldBeingHighlighted', []);
       this.state.set('highlightedEditable', null);
     },
@@ -503,7 +531,7 @@
         // When using a WYSIWYG editor, the width of the toolbar must match the
         // width of the editable.
         if (self.$el.hasClass('edit-type-direct-with-wysiwyg')) {
-          $hf.css({ width: $editable.width() + 10 });
+          $hf.css({ width: self.$el.width() + 10 });
         }
 
         // Pad the editable.
