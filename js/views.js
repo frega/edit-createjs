@@ -3,43 +3,174 @@
   Drupal.edit.views = Drupal.edit.views || {};
 
   Drupal.edit.views.ToolbarView = Backbone.View.extend({
-    fieldView: null,
-    initialize: function(options) {
+    fieldView:null,
+    // @todo: this should be the toolbar's $el.
+    $toolbar:null,
+    initialize:function (options) {
       this.fieldView = options.fieldView;
-      console.log('initialize ToolbarView', this.fieldView, this.fieldView.predicate);
     },
-    create: function() {
-      if (Drupal.edit.toolbar.create(this.fieldView.$el)) {
-        // We get the label to show from VIE's type system
-        var label = this.fieldView.predicate;
-        var attributeDef = this.fieldView.model.get('@type').attributes.get(this.fieldView.predicate);
-        if (attributeDef && attributeDef.metadata) {
-          label = attributeDef.metadata.label;
-        }
+    getEditable:function () {
+      return this.fieldView.$el;
+    },
+    getToolbarElement:function () {
+      return $('#' + this._id() );
+    },
+    createToolbar:function () {
+      if (this.getToolbarElement().length) {
+        return true;
+      }
+      $editable = this.getEditable();
+      // Render toolbar.
+      var $toolbar = $(Drupal.theme('editToolbarContainer', {
+        id:this._id()
+      }));
+      // Insert in DOM.
+      if ($editable.css('display') == 'inline') {
+        $toolbar.prependTo($editable.offsetParent());
+        var pos = $editable.position();
+        $toolbar.css('left', pos.left).css('top', pos.top);
+      }
+      else {
+        $toolbar.insertBefore($editable);
+      }
 
-        var self = this;
-        Drupal.edit.toolbar.get(this.fieldView.$el)
-        .find('.edit-toolbar:not(:has(.edit-toolgroup.info))')
+      // Animate the toolbar into visibility.
+      setTimeout(function () {
+        $toolbar.removeClass('edit-animate-invisible');
+      }, 0);
+
+      // Remove any and all existing toolbars, except for any that are for a
+      // currently being edited field.
+      $('.edit-toolbar-container:not(:has(.edit-editing))')
+        .trigger('edit-toolbar-remove.edit');
+
+      // Event bindings.
+      $toolbar
+        .bind('mouseenter.edit', function (e) {
+          // Prevent triggering the entity's mouse enter event.
+          e.stopPropagation();
+        })
+        .bind('mouseleave.edit', function (e) {
+          var el = $editable[0];
+          if (e.relatedTarget != el && !jQuery.contains(el, e.relatedTarget)) {
+            console.log('triggering mouseleave on ', $editable);
+            $editable.trigger('mouseleave.edit');
+          }
+          // Prevent triggering the entity's mouse leave event.
+          e.stopPropagation();
+        })
+        // Immediate removal whenever requested.
+        // (This is necessary when showing many toolbars in rapid succession: we
+        // don't want all of them to show up!)
+        .bind('edit-toolbar-remove.edit', function (e) {
+          $toolbar.remove();
+        })
+        .delegate('.edit-toolbar, .edit-toolgroup', 'click.edit mousedown.edit', function (e) {
+          if (!$(e.target).is(':input')) {
+            return false;
+          }
+        });
+
+      // We get the label to show from VIE's type system
+      var label = this.fieldView.predicate;
+      var attributeDef = this.fieldView.model.get('@type').attributes.get(this.fieldView.predicate);
+      if (attributeDef && attributeDef.metadata) {
+        label = attributeDef.metadata.label;
+      }
+      var self = this;
+
+      $toolbar.find('.edit-toolbar:not(:has(.edit-toolgroup.info))')
         .append(Drupal.theme('editToolgroup', {
-          classes: 'info',
-          buttons: [
-            {
-              url: '#',
-              label: label,
-              classes: 'blank-button label',
-              hasButtonRole: false
-            }
-          ]
-        }))
+        classes:'info',
+        buttons:[
+          {
+            url:'#',
+            label:label,
+            classes:'blank-button label',
+            hasButtonRole:false
+          }
+        ]
+      }))
         .delegate('a.label', 'click.edit', function (event) {
           self.fieldView.$el.trigger('click.edit');
           event.stopPropagation();
           event.preventDefault();
         });
+      $toolbar
+        .addClass('edit-editing')
+        .find('.edit-toolbar:not(:has(.edit-toolgroup.ops))')
+        .append(Drupal.theme('editToolgroup', {
+        classes:'ops',
+        buttons:[
+          {
+            url:'#',
+            label:Drupal.t('Save'),
+            classes:'field-save save gray-button'
+          },
+          {
+            url:'#',
+            label:'<span class="close"></span>',
+            classes:'field-close close gray-button'
+          }
+        ]
+      }))
+        .delegate('a.field-save', 'click.edit', function (event) {
+          self.fieldView.saveClicked(event);
+        })
+        .delegate('a.field-close', 'click.edit', function (event) {
+          self.fieldView.closeClicked(event);
+        });
+
+      if ($editable.hasClass('edit-type-direct-with-wysiwyg')) {
+        $toolbar
+        .find('.edit-toolbar:not(:has(.edit-toolbar-wysiwyg-tabs))')
+        .append(Drupal.theme('editToolgroup', {
+          classes: 'wysiwyg-tabs',
+          buttons: []
+        }))
+        .end()
+        .find('.edit-toolbar:not(:has(.edit-toolgroup.wysiwyg))')
+        .append(Drupal.theme('editToolgroup', {
+          classes: 'wysiwyg',
+          buttons: []
+        }));
+        this.fieldView.$el.addClass('edit-wysiwyg-attached');
       }
+      return true;
     },
-    remove: function() {
-      Drupal.edit.toolbar.remove(this.fieldView.$el);
+    // @todo: proper Backbone.remove() and unbind all events above!
+    removeToolbar:function () {
+      var $toolbar  = this.getToolbarElement();
+      // Remove after animation.
+      $toolbar
+        .addClass('edit-animate-invisible')
+        // Prevent this toolbar from being detected *while* it is being removed.
+        .removeAttr('id')
+        .find('.edit-toolbar .edit-toolgroup')
+        .addClass('edit-animate-invisible')
+        .bind(Drupal.edit.const.transitionEnd, function (e) {
+          $toolbar.remove();
+        });
+    },
+    // Animate into view.
+    show:function (toolgroup) {
+      this._find(toolgroup).removeClass('edit-animate-invisible');
+    },
+    hide:function (toolgroup) {
+      this._find(toolgroup).addClass('edit-animate-invisible');
+    },
+    addClass:function (toolgroup, classes) {
+      this._find(toolgroup).addClass(classes);
+    },
+    removeClass:function (toolgroup, classes) {
+      this._find(toolgroup).removeClass(classes);
+    },
+    _find:function (toolgroup) {
+      return this.getToolbarElement().find('.edit-toolbar .edit-toolgroup.' + toolgroup);
+    },
+    _id:function () {
+      var edit_id = Drupal.edit.util.getID(this.getEditable());
+      return 'edit-toolbar-for-' + edit_id.split(':').join('_');
     }
   });
 
@@ -97,11 +228,11 @@
       if (Drupal.edit.modal.get().length > 0 || editor.length === 0) {
         return;
       }
+
+      var editedFieldView = this.state.get('editedFieldView');
       // No modals open and user is in edit state, close editor by
       // triggering a click to the cancel button
-      Drupal.edit.toolbar.get(editor)
-      .find('a.close')
-      .trigger('click.edit');
+      editedFieldView.getToolbarElement().find('a.close').trigger('click.edit');
     }
   })
 
@@ -224,36 +355,19 @@
         if (!self.editing) {
           console.log('field:mouseleave', self.model.id, self.predicate);
           self.stopHighlight();
-          // TODO: Do we startHighlight the entity?
         }
         event.stopPropagation();
       });
     },
 
-    createToolbarView: function() {
-      if (!this.toolbarView) {
-        this.toolbarView = new Drupal.edit.views.ToolbarView({
-          fieldView: this
-        });
-        this.toolbarView.create();
-      }
-    },
-
-    removeToolbarView: function() {
-      if (this.toolbarView) {
-        this.toolbarView.remove();
-        Drupal.edit.toolbar.remove(this.$el);
-      }
-    },
-
     startHighlight: function () {
       console.log('startHighlight', this.model.id, this.predicate);
-      this.createToolbarView();
+
       // Animations.
       var self = this;
       setTimeout(function () {
         self.$el.addClass('edit-highlighted');
-        Drupal.edit.toolbar.show(self.$el, 'info');
+        self.getToolbarView().show('info');
       }, 0);
 
       this.state.set('fieldBeingHighlighted', this.$el);
@@ -262,11 +376,13 @@
 
     stopHighlight: function () {
       console.log('stopHighlight', this.model.id, this.predicate);
-      this.removeToolbarView();
       // Animations
       this.$el.removeClass('edit-highlighted');
       this.state.set('fieldBeingHighlighted', []);
       this.state.set('highlightedEditable', null);
+      // hide info
+      this.disableToolbar();
+
     },
 
     checkHighlight: function () {
@@ -275,6 +391,31 @@
         return;
       }
       this.stopHighlight();
+    },
+    enableToolbar: function () {
+      if (!this.toolbarView) {
+        this.toolbarView = new Drupal.edit.views.ToolbarView({
+          fieldView: this
+        });
+      }
+      this.toolbarView.createToolbar();
+    },
+    disableToolbar: function() {
+      if (this.toolbarView) {
+        this.toolbarView.removeToolbar();
+        this.toolbarView.remove();
+        // @todo: make sure everything is unbound.
+        delete this.toolbarView;
+      }
+    },
+    getToolbarView: function() {
+      if (!this.toolbarView) {
+        this.enableToolbar();
+      }
+      return this.toolbarView;
+    },
+    getToolbarElement: function() {
+      return this.getToolbarView().getToolbarElement();
     }
   });
 
@@ -364,15 +505,13 @@
       if (this.state.get('editedFieldView')) {
         this.state.get('editedFieldView').disableEditor();
       }
-
-      // Hide the curtain while editing
-      //Drupal.edit.util.findEntityForField(this.$el).find('.comment-wrapper .edit-curtain').height(0);
-
-      // Enable the toolbar with the save and close buttons
-      this.enableToolbar();
-
+      // @todo: we currently need to set this to access the current FieldView
+      // in ui-editable.js which is horrible.
+      this.state.set('editedFieldView', this);
       // Start the Create.js editable widget
       this.enableEditableWidget();
+      // Enable the toolbar with the save and close buttons
+      this.enableToolbar();
 
       this.state.set('fieldBeingEdited', this.$el);
       this.state.set('editedEditable', Drupal.edit.util.getID(this.$el));
@@ -383,34 +522,6 @@
       this.$el.createEditable({
         vie: this.vie,
         disabled: false
-      });
-    },
-
-    enableToolbar: function () {
-      var self = this;
-      Drupal.edit.toolbar.get(this.$el)
-      .addClass('edit-editing')
-      .find('.edit-toolbar:not(:has(.edit-toolgroup.ops))')
-      .append(Drupal.theme('editToolgroup', {
-        classes: 'ops',
-        buttons: [
-          {
-            url: '#',
-            label: Drupal.t('Save'),
-            classes: 'field-save save gray-button'
-          },
-          {
-            url: '#',
-            label: '<span class="close"></span>',
-            classes: 'field-close close gray-button'
-          }
-        ]
-      }))
-      .delegate('a.field-save', 'click.edit', function (event) {
-        self.saveClicked(event);
-      })
-      .delegate('a.field-close', 'click.edit', function (event) {
-        self.closeClicked(event);
       });
     },
 
@@ -425,14 +536,13 @@
 
       // Stop the Create.js editable widget
       this.disableEditableWidget();
+      this.disableToolbar();
 
-      Drupal.edit.toolbar.remove(this.$el);
+      $('#edit_backstage form').remove();
 
       this.state.set('fieldBeingEdited', []);
       this.state.set('editedEditable', null);
       this.state.set('editedFieldView', null);
-
-
     },
 
     disableEditableWidget: function () {
@@ -449,25 +559,10 @@
         this.padEditable();
       }
 
-      if (this.$el.hasClass('edit-type-direct-with-wysiwyg')) {
-        Drupal.edit.toolbar.get(this.$el)
-        .find('.edit-toolbar:not(:has(.edit-toolbar-wysiwyg-tabs))')
-        .append(Drupal.theme('editToolgroup', {
-          classes: 'wysiwyg-tabs',
-          buttons: []
-        }))
-        .end()
-        .find('.edit-toolbar:not(:has(.edit-toolgroup.wysiwyg))')
-        .append(Drupal.theme('editToolgroup', {
-          classes: 'wysiwyg',
-          buttons: []
-        }));
-        this.$el.addClass('edit-wysiwyg-attached');
-      }
-      Drupal.edit.toolbar.show(this.$el, 'wysiwyg-tabs');
-      Drupal.edit.toolbar.show(this.$el, 'wysiwyg');
+      this.getToolbarView().show('wysiwyg-tabs');
+      this.getToolbarView().show('wysiwyg');
       // Show the ops (save, close) as well.
-      Drupal.edit.toolbar.show(this.$el, 'ops');
+      this.getToolbarView().show('ops');
       // hmm, why in the DOM?
       this.$el.data('edit-content-changed', false);
       this.$el.trigger('edit-form-loaded.edit');
@@ -513,7 +608,7 @@
 
       // 2) Add padding; use animations.
       var posProp = Drupal.edit.util.getPositionProperties(this.$el);
-      var $toolbar = Drupal.edit.toolbar.get(this.$el);
+      var $toolbar = this.getToolbarElement();
       setTimeout(function() {
         // Re-enable width animations (padding changes affect width too!).
         self.$el.removeClass('edit-animate-disable-width');
@@ -563,12 +658,11 @@
       // 2) Remove padding; use animations (these will run simultaneously with)
       // the fading out of the toolbar as its gets removed).
       var posProp = Drupal.edit.util.getPositionProperties(this.$el);
-      var $toolbar = Drupal.edit.toolbar.get(this.$el);
+      var $toolbar = this.getToolbarElement();
 
       setTimeout(function() {
         // Re-enable width animations (padding changes affect width too!).
         self.$el.removeClass('edit-animate-disable-width');
-
 
         // Move the toolbar back to its original position.
         var $hf = $toolbar.find('.edit-toolbar-heightfaker');
@@ -612,7 +706,7 @@
       this.$el.data('edit-content-changed', true);
       this.$el.trigger('edit-content-changed.edit');
 
-      Drupal.edit.toolbar.get(this.$el)
+      this.getToolbarElement()
       .find('a.save')
       .addClass('blue-button')
       .removeClass('gray-button')
@@ -637,7 +731,6 @@
         vie: this.vie,
         disabled: true
       });
-      $('#edit_backstage form').remove();
     },
 
     saveClicked: function (event) {

@@ -8,146 +8,6 @@
 
 Drupal.edit = Drupal.edit || {};
 
-
-Drupal.edit.toolbar = {
-  create: function($editable) {
-    if (Drupal.edit.toolbar.get($editable).length > 0) {
-      console.log('Drupal.edit.toolbar already instantiated/present for editable', Drupal.edit.toolbar.get($editable));
-      return false;
-    }
-    else {
-      // Render toolbar.
-      var $toolbar = $(Drupal.theme('editToolbarContainer', {
-        id: this._id($editable)
-      }));
-
-      // Insert in DOM.
-      if ($editable.css('display') == 'inline') {
-        $toolbar.prependTo($editable.offsetParent());
-
-        var pos = $editable.position();
-        Drupal.edit.toolbar.get($editable)
-        .css('left', pos.left).css('top', pos.top);
-      }
-      else {
-        $toolbar.insertBefore($editable);
-      }
-
-      // Animate the toolbar into visibility.
-      setTimeout(function() {
-        $toolbar.removeClass('edit-animate-invisible');
-      }, 0);
-
-
-      // Remove any and all existing toolbars, except for any that are for a
-      // currently being edited field.
-      $('.edit-toolbar-container:not(:has(.edit-editing))')
-      .trigger('edit-toolbar-remove.edit');
-
-      // Event bindings.
-      $toolbar
-      .bind('mouseenter.edit', function(e) {
-        // Prevent triggering the entity's mouse enter event.
-        e.stopPropagation();
-      })
-      .bind('mouseleave.edit', function(e) {
-        var el = $editable[0];
-        if (e.relatedTarget != el && !jQuery.contains(el, e.relatedTarget)) {
-          console.log('triggering mouseleave on ', $editable);
-          $editable.trigger('mouseleave.edit');
-        }
-        // Prevent triggering the entity's mouse leave event.
-        e.stopPropagation();
-      })
-      // Immediate removal whenever requested.
-      // (This is necessary when showing many toolbars in rapid succession: we
-      // don't want all of them to show up!)
-      .bind('edit-toolbar-remove.edit', function(e) {
-        $toolbar.remove();
-      })
-      .delegate('.edit-toolbar, .edit-toolgroup', 'click.edit mousedown.edit', function(e) {
-        if (!$(e.target).is(':input')) {
-          return false;
-        }
-      })
-      // Accomodate changed content in tertiary toolbar.
-      .bind('edit-toolbar-tertiary-changed', function(e) {
-        var $tertiary = $toolbar.find('.edit-toolbar.tertiary');
-        var adjustedOffset = $tertiary.data('edit-adjusted-offset');
-        if (typeof adjustedOffset === 'undefined') {
-          $tertiary.data('edit-adjusted-offset', 0);
-          adjustedOffset = 0;
-        }
-
-        var height = 0;
-        $toolbar.find('.edit-toolbar.tertiary').children()
-        .each(function(i, element) {
-          height += $(element).height();
-        });
-
-        // If the height has changed, then change the offsets of the toolgroups
-        // as well.
-        if (height != adjustedOffset) {
-          $toolbar.find('.edit-toolbar').each(function(i, element) {
-            var top = $(element).css('top');
-            $(element).css('top', parseFloat(top) - height + adjustedOffset + 'px');
-          });
-          $tertiary
-            .css('height', height)
-            .data('edit-adjusted-offset', height);
-        }
-      });
-
-      return true;
-    }
-  },
-
-  get: function($editable) {
-    return ($editable.length == 0)
-      ? $([])
-      : $('#' + this._id($editable));
-  },
-
-  remove: function($editable) {
-    var $toolbar = Drupal.edit.toolbar.get($editable);
-
-    // Remove after animation.
-    $toolbar
-    .addClass('edit-animate-invisible')
-    // Prevent this toolbar from being detected *while* it is being removed.
-    .removeAttr('id')
-    .find('.edit-toolbar .edit-toolgroup')
-    .addClass('edit-animate-invisible')
-    .bind(Drupal.edit.const.transitionEnd, function(e) {
-      $toolbar.remove();
-    });
-  },
-
-  // Animate into view.
-  show: function($editable, toolgroup) {
-    this._find($editable, toolgroup).removeClass('edit-animate-invisible');
-  },
-
-  addClass: function($editable, toolgroup, classes) {
-    this._find($editable, toolgroup).addClass(classes);
-  },
-
-  removeClass: function($editable, toolgroup, classes) {
-    this._find($editable, toolgroup).removeClass(classes);
-  },
-
-  _find: function($editable, toolgroup) {
-    return Drupal.edit.toolbar.get($editable)
-           .find('.edit-toolbar .edit-toolgroup.' + toolgroup);
-  },
-
-  _id: function($editable) {
-    var edit_id = Drupal.edit.util.getID($editable);
-    return 'edit-toolbar-for-' + edit_id.split(':').join('_');
-  }
-};
-
-
 Drupal.edit.form = {
   create: function($editable, cb) {
     // @todo: refactor Drupal.edit.form into *two* separate objects/classes:
@@ -157,7 +17,12 @@ Drupal.edit.form = {
     var predicate = Drupal.edit.util.getElementPredicate($editable);
     var edit_id = entity.getSubjectUri() + ':' + predicate;
     var $field = Drupal.edit.util.findFieldForEditable($editable);
-
+    // @todo: this needs to be refactored, we should have access to the view
+    // rather than the $editable/$el of the view.
+    // moreover, we should probably be de-coupling this and trigger events
+    // instead of mucking with the toolbar from here.
+    var toolbarView = Drupal.edit.state.get('editedFieldView').getToolbarView();
+    var $toolbar = toolbarView.getToolbarElement();
     // We only create a placeholder-div/form for the form-based instances.
     if ($field.hasClass('edit-type-form')) {
       // Check whether this form has already been loaded.
@@ -165,7 +30,8 @@ Drupal.edit.form = {
         return false;
       }
       // Indicate in the 'info' toolgroup that the form is loading.
-      Drupal.edit.toolbar.addClass($editable, 'primary', 'info', 'loading');
+      // Drupal.edit.toolbar.addClass($editable, 'primary', 'info', 'loading');
+      toolbarView.addClass('info', 'loading');
 
       // Render form container.
       var $form = $(Drupal.theme('editFormContainer', {
@@ -181,7 +47,8 @@ Drupal.edit.form = {
         $form.css('left', pos.left).css('top', pos.top);
         // Reset the toolbar's positioning because it'll be moved inside the
         // form container.
-        Drupal.edit.toolbar.get($editable).css('left', '').css('top', '');
+        // Drupal.edit.toolbar.get($editable).css('left', '').css('top', '');
+        $toolbar.css('left', '').css('top', '');
       }
       else {
         $form.insertBefore($editable);
@@ -189,7 +56,9 @@ Drupal.edit.form = {
 
       // Move  toolbar inside .edit-form-container, to let it snap to the width
       // of the form instead of the field formatter.
-      Drupal.edit.toolbar.get($editable).detach().prependTo('.edit-form');
+      // Drupal.edit.toolbar.get($editable).detach().prependTo('.edit-form');
+      $toolbar.detach().prependTo('.edit-form');
+
     }
 
     var onLoadCallback = function(status, $form) {
@@ -200,7 +69,8 @@ Drupal.edit.form = {
         $('#' + formWrapperId + ' .placeholder').replaceWith($form);
 
         // Indicate in the 'info' toolgroup that the form has loaded.
-        Drupal.edit.toolbar.removeClass($editable, 'primary', 'info', 'loading');
+        // Drupal.edit.toolbar.removeClass($editable, 'primary', 'info', 'loading');
+        toolbarView.removeClass('info', 'loading');
 
         // Detect changes in this form.
         Drupal.edit.form.get($editable)
@@ -223,7 +93,8 @@ Drupal.edit.form = {
       Drupal.edit.form._setupAjaxForm($editable, $field, $submit);
 
       // Animations.
-      Drupal.edit.toolbar.show($editable, 'secondary', 'ops');
+      // Drupal.edit.toolbar.show($editable, 'ops');
+      toolbarView.show('ops');
       $editable.trigger('edit-form-loaded.edit');
 
       // callback to be able to decorate / continue with the editable...
